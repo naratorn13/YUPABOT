@@ -1,35 +1,38 @@
 from flask import Flask, request, jsonify
-import os, time, hmac, hashlib, base64, requests
+import requests
+import time
+import base64
+import hmac
+import hashlib
+import json
 
 app = Flask(__name__)
 
-# === OKX API Credentials ===
+# === กำหนดค่าคีย์ของคุณที่ได้จาก OKX ===
 API_KEY = "3f9195c4-0485-4ebf-abc8-161d85857005"
-SECRET_KEY = "DC9F9093F03F8791D098C5CF80A54921"
-PASSPHRASE = "13112535DODo."
+API_SECRET = "DC9F9093F03F8791D098C5CF80A54921"
+API_PASSPHRASE = "13112535DODo."
 
-# === Generate OKX Signature ===
+# === สร้างลายเซ็น ===
 def generate_signature(timestamp, method, request_path, body):
-    if body:
-        body = str(body).replace("'", '"')
-    else:
-        body = ''
-    message = f"{timestamp}{method}{request_path}{body}"
-    mac = hmac.new(bytes(SECRET_KEY, encoding='utf8'), bytes(message, encoding='utf8'), digestmod=hashlib.sha256)
-    d = mac.digest()
-    return base64.b64encode(d).decode()
+    body_str = json.dumps(body, separators=(',', ':')) if body else ''  # ต้องไม่มีเว้นวรรคเกิน
+    message = f"{timestamp}{method.upper()}{request_path}{body_str}"
+    hmac_key = base64.b64decode(API_SECRET)
+    signature = hmac.new(hmac_key, message.encode(), hashlib.sha256).digest()
+    return base64.b64encode(signature).decode()
 
-# === Send Order to OKX ===
+# === ส่งคำสั่งซื้อไปที่ OKX ===
 def send_order_to_okx(symbol, size):
     timestamp = time.strftime('%Y-%m-%dT%H:%M:%S.000Z', time.gmtime())
-    url = "https://www.okx.com"  # ← แก้แล้ว ถูกต้อง
+    url = "https://www.okx.com"
     endpoint = "/api/v5/trade/order"
     full_url = url + endpoint
 
     body = {
         "instId": symbol,
-        "tdMode": "cash",
+        "tdMode": "cross",
         "side": "buy",
+        "posSide": "long",
         "ordType": "market",
         "sz": str(size)
     }
@@ -37,30 +40,23 @@ def send_order_to_okx(symbol, size):
     signature = generate_signature(timestamp, "POST", endpoint, body)
 
     headers = {
+        "Content-Type": "application/json",
         "OK-ACCESS-KEY": API_KEY,
         "OK-ACCESS-SIGN": signature,
         "OK-ACCESS-TIMESTAMP": timestamp,
-        "OK-ACCESS-PASSPHRASE": PASSPHRASE,
-        "Content-Type": "application/json"
+        "OK-ACCESS-PASSPHRASE": API_PASSPHRASE
     }
 
-    response = requests.post(full_url, json=body, headers=headers)
-    print("OKX API Response:", response.json())
+    response = requests.post(full_url, headers=headers, json=body)
     return response.json()
 
-# === Routes ===
-@app.route('/')
-def home():
-    return 'Webhook Bot is running!'
-
+# === Webhook Receiver ===
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.json
-    print("Received:", data)
-
-    action = data.get("action")
-    symbol = data.get("symbol")
-    size = data.get("size")
+    action = data.get('action', 'buy')
+    symbol = data.get('symbol')
+    size = data.get('size')
 
     print(f"Action: {action}, Symbol: {symbol}, Size: {size}")
 
@@ -73,5 +69,4 @@ def webhook():
 
 # === Run Server ===
 if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=5000)
